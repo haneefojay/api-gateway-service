@@ -1,0 +1,167 @@
+"""
+RabbitMQ Publisher for API Gateway
+Handles message publishing to notification queues
+"""
+
+import aio_pika
+import json
+import logging
+from typing import Dict, Any
+from app.config import settings, get_rabbitmq_url
+
+logger = logging.getLogger(__name__)
+
+class RabbitMQPublisher:
+    """RabbitMQ message publisher"""
+    
+    def __init__(self):
+        self.connection = None
+        self.channel = None
+        self.exchange = None
+    
+    async def connect(self):
+        """Establish connection to RabbitMQ"""
+        try:
+            # Create connection
+            self.connection = await aio_pika.connect_robust(
+                get_rabbitmq_url(),
+                timeout=10
+            )
+            
+            # Create channel
+            self.channel = await self.connection.channel()
+            
+            # Declare exchange
+            self.exchange = await self.channel.declare_exchange(
+                settings.RABBITMQ_EXCHANGE,
+                type=aio_pika.ExchangeType.DIRECT,
+                durable=True
+            )
+            
+            # Declare queues and bind them to exchange
+            await self._setup_queues()
+            
+            logger.info("✓ RabbitMQ connection established")
+        
+        except Exception as e:
+            logger.error(f"Failed to connect to RabbitMQ: {str(e)}")
+            raise
+    
+    async def _setup_queues(self):
+        """Set up queues and bindings"""
+        try:
+            # Declare Dead Letter Exchange
+            dlx = await self.channel.declare_exchange(
+                "notifications.dlx",
+                type=aio_pika.ExchangeType.FANOUT,
+                durable=True
+            )
+            
+            # Declare Dead Letter Queue
+            failed_queue = await self.channel.declare_queue(
+                "failed.queue",
+                durable=True
+            )
+            await failed_queue.bind(dlx)
+            
+            # Declare Email Queue with DLX
+            email_queue = await self.channel.declare_queue(
+                "email.queue",
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": "notifications.dlx"
+                }
+            )
+            await email_queue.bind(
+                self.exchange,
+                routing_key="notification.email"
+            )
+            
+            # Declare Push Queue with DLX
+            push_queue = await self.channel.declare_queue(
+                "push.queue",
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": "notifications.dlx"
+                }
+            )
+            await push_queue.bind(
+                self.exchange,
+                routing_key="notification.push"
+            )
+            
+            logger.info("✓ RabbitMQ queues and bindings configured")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup queues: {str(e)}")
+            raise
+    
+    async def publish_message(
+        self,
+        exchange: str,
+        routing_key: str,
+        message: Dict[str, Any]
+    ) -> bool:
+        """
+        Publish message to RabbitMQ exchange
+        
+        Args:
+            exchange: Exchange name
+            routing_key: Routing key for message
+            message: Message payload as dictionary
+            
+        Returns:
+            bool: True if published successfully
+        """
+        try:
+            if not self.channel or self.channel.is_closed:
+                await self.connect()
+            
+            # Convert message to JSON
+            message_body = json.dumps(message)
+            
+            # Create message with properties
+            aio_message = aio_pika.Message(
+                body=message_body.encode(),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                content_type="application/json",
+                headers={
+                    "correlation_id": message.get("correlation_id"),
+                    "notification_id": message.get("notification_id")
+                }
+            )
+            
+            # Publish message
+            await self.exchange.publish(
+                aio_message,
+                routing_key=routing_key
+            )
+            
+            logger.info(
+                f"Message published to {routing_key}: "
+                f"{message.get('notification_id')}"
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to publish message: {str(e)}")
+            raise
+    
+    async def disconnect(self):
+        """Close RabbitMQ connection"""
+        try:
+            if self.connection and not self.connection.is_closed:
+                await self.connection.close()
+                logger.info("✓ RabbitMQ connection closed")
+        except Exception as e:
+            logger.error(f"Error closing RabbitMQ connection: {str(e)}")
+    
+    async def check_health(self) -> bool:
+        """Check RabbitMQ connection health"""
+        try:
+            if self.connection and not self.connection.is_closed:
+                return True
+            return False
+        except:
+            return False
