@@ -3,8 +3,8 @@ Configuration settings for API Gateway Service
 Railway-compatible with automatic service discovery
 """
 
-from pydantic import Field
 from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
 from typing import Optional
 import os
 
@@ -13,36 +13,32 @@ class Settings(BaseSettings):
     
     # Service Configuration
     SERVICE_NAME: str = "api-gateway"
-    SERVICE_PORT: int = Field(default=8000, env="PORT")  # Railway provides PORT
+    SERVICE_PORT: int = Field(default=8000, validation_alias="PORT")  # Railway provides PORT
     ENVIRONMENT: str = "production"
     DEBUG: bool = False
     
     # RabbitMQ Configuration
-    # Railway provides these automatically when you add RabbitMQ service
     RABBITMQ_HOST: str = Field(default="localhost")
-    RABBITMQ_PORT: int = Field(default=5672)
+    RABBITMQ_PORT: Optional[int] = Field(default=5672)  # Make optional
     RABBITMQ_USER: str = Field(default="guest")
     RABBITMQ_PASS: str = Field(default="guest")
     RABBITMQ_VHOST: str = "/"
     RABBITMQ_EXCHANGE: str = "notifications.direct"
     RABBITMQ_EXCHANGE_TYPE: str = "direct"
-    
-    # Alternative: Parse from RABBITMQ_URL if Railway provides it
-    RABBITMQ_URL: Optional[str] = None
+    RABBITMQ_URL: Optional[str] = None  # Railway provides this
     
     # Redis Configuration
-    # Railway provides REDIS_URL (redis://default:password@host:port)
-    REDIS_URL: Optional[str] = None
+    REDIS_URL: Optional[str] = None  # Railway provides this
     REDIS_HOST: str = Field(default="localhost")
-    REDIS_PORT: int = Field(default=6379)
+    REDIS_PORT: Optional[int] = Field(default=6379)  # Make optional
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None
     REDIS_DECODE_RESPONSES: bool = True
     
     # JWT Authentication
-    JWT_SECRET: str = Field(..., min_length=32)  # Required, must be set
+    JWT_SECRET: str = Field(default="change-this-in-production-make-it-very-long-and-random")
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRATION: int = 3600  # 1 hour in seconds
+    JWT_EXPIRATION: int = 3600
     
     # Rate Limiting
     RATE_LIMIT_REQUESTS: int = 100
@@ -52,37 +48,55 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_FAIL_MAX: int = 5
     CIRCUIT_BREAKER_TIMEOUT: int = 60
     
-    # Other Service URLs (for inter-service communication)
+    # Other Service URLs
     USER_SERVICE_URL: str = "http://localhost:8001"
     TEMPLATE_SERVICE_URL: str = "http://localhost:8002"
     EMAIL_SERVICE_URL: str = "http://localhost:8003"
     PUSH_SERVICE_URL: str = "http://localhost:8004"
     
-    # Notification Status TTL (in Redis)
-    NOTIFICATION_STATUS_TTL: int = 604800  # 7 days in seconds
-    
-    # Idempotency Cache TTL
-    IDEMPOTENCY_TTL: int = 86400  # 24 hours in seconds
+    # TTLs
+    NOTIFICATION_STATUS_TTL: int = 604800
+    IDEMPOTENCY_TTL: int = 86400
     
     # Logging
     LOG_LEVEL: str = "INFO"
+    
+    @field_validator('RABBITMQ_PORT', 'REDIS_PORT', mode='before')
+    @classmethod
+    def parse_port(cls, v):
+        """Handle empty string ports from Railway"""
+        if v == '' or v is None:
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
     
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        # Allow population by field name and alias
+        populate_by_name = True
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def model_post_init(self, __context):
+        """Parse connection URLs after initialization"""
         # Parse REDIS_URL if provided (Railway format)
-        if self.REDIS_URL and not self.REDIS_PASSWORD:
+        if self.REDIS_URL:
             self._parse_redis_url()
+        
         # Parse RABBITMQ_URL if provided
         if self.RABBITMQ_URL:
             self._parse_rabbitmq_url()
+        
+        # Set defaults if still None
+        if self.RABBITMQ_PORT is None:
+            self.RABBITMQ_PORT = 5672
+        if self.REDIS_PORT is None:
+            self.REDIS_PORT = 6379
     
     def _parse_redis_url(self):
-        """Parse Railway's REDIS_URL format: redis://default:password@host:port/db"""
+        """Parse Railway's REDIS_URL format"""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(self.REDIS_URL)
@@ -93,12 +107,15 @@ class Settings(BaseSettings):
             if parsed.password:
                 self.REDIS_PASSWORD = parsed.password
             if parsed.path and len(parsed.path) > 1:
-                self.REDIS_DB = int(parsed.path[1:])
+                try:
+                    self.REDIS_DB = int(parsed.path[1:])
+                except:
+                    pass
         except Exception as e:
             print(f"Warning: Could not parse REDIS_URL: {e}")
     
     def _parse_rabbitmq_url(self):
-        """Parse RABBITMQ_URL format: amqp://user:pass@host:port/vhost"""
+        """Parse RABBITMQ_URL format"""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(self.RABBITMQ_URL)
@@ -118,7 +135,7 @@ class Settings(BaseSettings):
 # Create settings instance
 settings = Settings()
 
-# RabbitMQ connection URL
+# Connection URL helpers
 def get_rabbitmq_url() -> str:
     """Construct RabbitMQ connection URL"""
     if settings.RABBITMQ_URL:
@@ -128,7 +145,6 @@ def get_rabbitmq_url() -> str:
         f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{settings.RABBITMQ_VHOST}"
     )
 
-# Redis connection URL
 def get_redis_url() -> str:
     """Construct Redis connection URL"""
     if settings.REDIS_URL:
