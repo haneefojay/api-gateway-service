@@ -109,6 +109,20 @@ async def general_exception_handler(request: Request, exc: Exception):
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Check service health and dependencies"""
+    global startup_complete
+    
+    # During startup phase, return 200 OK to prevent health check failures
+    # This allows the container to stay alive while dependencies initialize
+    if not startup_complete:
+        return {
+            "status": "starting",
+            "service": "api-gateway",
+            "timestamp": datetime.utcnow().isoformat(),
+            "version": "1.0.0",
+            "message": "Service initializing..."
+        }
+    
+    # Once startup is complete, check dependencies
     checks = {
         "rabbitmq": await circuit_breaker.check_rabbitmq_health(),
         "redis": await redis_client.check_health(),
