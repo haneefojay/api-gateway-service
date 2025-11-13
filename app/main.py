@@ -26,6 +26,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Track startup state in app state
+app.state.startup_complete = False
+
 # Configure OpenAPI security scheme for Swagger UI Authorize button
 def custom_openapi():
     if app.openapi_schema:
@@ -109,11 +112,10 @@ async def general_exception_handler(request: Request, exc: Exception):
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Check service health and dependencies"""
-    global startup_complete
     
     # During startup phase, return 200 OK to prevent health check failures
     # This allows the container to stay alive while dependencies initialize
-    if not startup_complete:
+    if not app.state.startup_complete:
         return {
             "status": "starting",
             "service": "api-gateway",
@@ -152,9 +154,13 @@ async def startup_event():
         await rabbitmq_publisher.connect()
         await redis_client.connect()
         logger.info("✓ RabbitMQ and Redis connections established")
+        app.state.startup_complete = True
+        logger.info("✓ Startup complete - service is ready")
     except Exception as e:
         logger.error(f"Failed to initialize connections: {str(e)}")
-        raise
+        # Don't raise - allow service to start in degraded mode
+        # Health check will report degraded status once startup_complete is True
+        app.state.startup_complete = True
 
 @app.on_event("shutdown")
 async def shutdown_event():
