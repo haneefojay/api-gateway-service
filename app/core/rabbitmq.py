@@ -26,24 +26,31 @@ class RabbitMQPublisher:
             # Wait for the broker TCP port to be ready to avoid race conditions
             await self._wait_for_broker()
 
-            # Create SSL context for AMQPS (CloudAMQP uses port 5671 with SSL)
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = True
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
+            # For CloudAMQP with AMQPS (port 5671), we need to use amqps:// URL scheme
+            # and provide SSL context
+            url = get_rabbitmq_url()
             
-            # Create connection with SSL if using AMQPS (port 5671)
-            connection_kwargs = {
-                "timeout": 10,
-            }
-            
-            # Add SSL context for AMQPS connections
+            # Replace amqp:// with amqps:// for SSL connections on port 5671
             if settings.RABBITMQ_PORT == 5671:
-                connection_kwargs["ssl_context"] = ssl_context
-            
-            self.connection = await aio_pika.connect_robust(
-                get_rabbitmq_url(),
-                **connection_kwargs
-            )
+                url = url.replace("amqp://", "amqps://")
+                
+                # Create SSL context for AMQPS
+                ssl_context = ssl.create_default_context()
+                # For CloudAMQP, we need to be more lenient with SSL verification
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                
+                self.connection = await aio_pika.connect_robust(
+                    url,
+                    timeout=10,
+                    ssl_context=ssl_context
+                )
+            else:
+                # Plain AMQP for port 5672
+                self.connection = await aio_pika.connect_robust(
+                    url,
+                    timeout=10
+                )
             
             # Create channel
             self.channel = await self.connection.channel()
