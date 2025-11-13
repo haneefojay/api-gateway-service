@@ -6,6 +6,7 @@ Handles message publishing to notification queues
 import aio_pika
 import json
 import logging
+import ssl
 from typing import Dict, Any
 from app.config import settings, get_rabbitmq_url
 
@@ -25,10 +26,23 @@ class RabbitMQPublisher:
             # Wait for the broker TCP port to be ready to avoid race conditions
             await self._wait_for_broker()
 
-            # Create connection
+            # Create SSL context for AMQPS (CloudAMQP uses port 5671 with SSL)
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = True
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+            
+            # Create connection with SSL if using AMQPS (port 5671)
+            connection_kwargs = {
+                "timeout": 10,
+            }
+            
+            # Add SSL context for AMQPS connections
+            if settings.RABBITMQ_PORT == 5671:
+                connection_kwargs["ssl_context"] = ssl_context
+            
             self.connection = await aio_pika.connect_robust(
                 get_rabbitmq_url(),
-                timeout=10
+                **connection_kwargs
             )
             
             # Create channel
