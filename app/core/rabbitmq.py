@@ -22,6 +22,9 @@ class RabbitMQPublisher:
     async def connect(self):
         """Establish connection to RabbitMQ"""
         try:
+            # Wait for the broker TCP port to be ready to avoid race conditions
+            await self._wait_for_broker()
+
             # Create connection
             self.connection = await aio_pika.connect_robust(
                 get_rabbitmq_url(),
@@ -46,6 +49,39 @@ class RabbitMQPublisher:
         except Exception as e:
             logger.error(f"Failed to connect to RabbitMQ: {str(e)}")
             raise
+
+    async def _wait_for_broker(self, max_retries: int = 10, delay: float = 1.0):
+        """Simple TCP check to ensure RabbitMQ port is accepting connections.
+
+        This helps avoid AMQP protocol errors caused by connecting before the
+        broker is fully ready. Uses exponential backoff.
+        """
+        import asyncio
+        import socket
+
+        host = settings.RABBITMQ_HOST
+        port = settings.RABBITMQ_PORT
+
+        attempt = 0
+        while attempt < max_retries:
+            try:
+                # Try opening a plain TCP connection
+                fut = asyncio.open_connection(host=host, port=port)
+                reader, writer = await asyncio.wait_for(fut, timeout=3)
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                logger.info("RabbitMQ TCP port is open")
+                return
+            except Exception as exc:
+                attempt += 1
+                wait = delay * (2 ** (attempt - 1))
+                logger.debug(f"RabbitMQ not ready (attempt {attempt}/{max_retries}): {exc}")
+                await asyncio.sleep(wait)
+
+        raise ConnectionError(f"RabbitMQ TCP port {host}:{port} not reachable after {max_retries} attempts")
     
     async def _setup_queues(self):
         """Set up queues and bindings"""

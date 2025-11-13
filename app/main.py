@@ -7,6 +7,7 @@ Handles authentication, routing, and status tracking
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from datetime import datetime
 import uuid
 import logging
@@ -24,6 +25,32 @@ app = FastAPI(
     description="Entry point for Distributed Notification System",
     version="1.0.0"
 )
+
+# Configure OpenAPI security scheme for Swagger UI Authorize button
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title="API Gateway Service",
+        version="1.0.0",
+        description="Entry point for Distributed Notification System",
+        routes=app.routes,
+    )
+    
+    openapi_schema["components"]["securitySchemes"] = {
+        "Bearer": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Enter JWT token (get one from /api/v1/auth/login)"
+        }
+    }
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 app.add_middleware(
     CORSMiddleware,

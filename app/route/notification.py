@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Header, Request, status
+from fastapi import APIRouter, HTTPException, Header, Request, status, Security
+from fastapi.security import HTTPBearer
 from datetime import datetime
 import uuid
 import json
@@ -16,6 +17,8 @@ from app.models.requests import (
 
 from app.models.responses import StandardResponse, PaginationMeta
 
+# Security scheme for Swagger UI
+security = HTTPBearer()
 
 router = APIRouter(
     tags=["Notification"]
@@ -26,12 +29,13 @@ router = APIRouter(
 @router.post(
     "/api/v1/notifications/",
     response_model=StandardResponse,
-    status_code=status.HTTP_202_ACCEPTED
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Security(security)],
 )
 async def send_notification(
     request: NotificationRequest,
     req: Request,
-    authorization: str = Header(..., alias="Authorization")
+    credentials = Security(security)
 ):
     """
     Send notification via email or push
@@ -48,10 +52,7 @@ async def send_notification(
     """
     try:
         # 1. Verify authentication
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization header")
-        
-        token = authorization.replace("Bearer ", "")
+        token = credentials.credentials
         payload = auth_handler.verify_token(token)
         authenticated_user_id = payload.get("user_id")
         
@@ -162,19 +163,17 @@ async def send_notification(
 
 @router.get(
     "/api/v1/notifications/{notification_id}/status",
-    response_model=StandardResponse
+    response_model=StandardResponse,
+    dependencies=[Security(security)]
 )
 async def get_notification_status(
     notification_id: str,
-    authorization: str = Header(..., alias="Authorization")
+    credentials = Security(security)
 ):
     """Get the current status of a notification"""
     try:
         # Verify authentication
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization header")
-        
-        token = authorization.replace("Bearer ", "")
+        token = credentials.credentials
         auth_handler.verify_token(token)
         
         # Get status from Redis
@@ -203,12 +202,12 @@ async def get_notification_status(
 # Status update endpoint for Email/Push services
 @router.post(
     "/api/v1/{notification_preference}/status/",
-    response_model=StandardResponse
+    response_model=StandardResponse,
+    dependencies=[Security(security)]
 )
 async def update_notification_status(
     notification_preference: str,
-    request: StatusUpdateRequest,
-    authorization: str = Header(None, alias="Authorization")
+    request: StatusUpdateRequest
 ):
     """
     Update notification status (called by Email/Push services)
@@ -281,20 +280,18 @@ async def update_notification_status(
 
 @router.get(
     "/api/v1/notifications",
-    response_model=StandardResponse
+    response_model=StandardResponse,
+    dependencies=[Security(security)]
 )
 async def list_notifications(
     page: int = 1,
     limit: int = 10,
-    authorization: str = Header(..., alias="Authorization")
+    credentials = Security(security)
 ):
     """List all notifications for the authenticated user"""
     try:
         # Verify authentication
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization header")
-        
-        token = authorization.replace("Bearer ", "")
+        token = credentials.credentials
         payload = auth_handler.verify_token(token)
         user_id = payload.get("user_id")
         
