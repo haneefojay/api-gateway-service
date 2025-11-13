@@ -64,6 +64,49 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Parse REDIS_URL if provided (Railway format)
+        if self.REDIS_URL and not self.REDIS_PASSWORD:
+            self._parse_redis_url()
+        # Parse RABBITMQ_URL if provided
+        if self.RABBITMQ_URL:
+            self._parse_rabbitmq_url()
+    
+    def _parse_redis_url(self):
+        """Parse Railway's REDIS_URL format: redis://default:password@host:port/db"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.REDIS_URL)
+            if parsed.hostname:
+                self.REDIS_HOST = parsed.hostname
+            if parsed.port:
+                self.REDIS_PORT = parsed.port
+            if parsed.password:
+                self.REDIS_PASSWORD = parsed.password
+            if parsed.path and len(parsed.path) > 1:
+                self.REDIS_DB = int(parsed.path[1:])
+        except Exception as e:
+            print(f"Warning: Could not parse REDIS_URL: {e}")
+    
+    def _parse_rabbitmq_url(self):
+        """Parse RABBITMQ_URL format: amqp://user:pass@host:port/vhost"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.RABBITMQ_URL)
+            if parsed.hostname:
+                self.RABBITMQ_HOST = parsed.hostname
+            if parsed.port:
+                self.RABBITMQ_PORT = parsed.port
+            if parsed.username:
+                self.RABBITMQ_USER = parsed.username
+            if parsed.password:
+                self.RABBITMQ_PASS = parsed.password
+            if parsed.path and len(parsed.path) > 1:
+                self.RABBITMQ_VHOST = parsed.path[1:]
+        except Exception as e:
+            print(f"Warning: Could not parse RABBITMQ_URL: {e}")
 
 # Create settings instance
 settings = Settings()
