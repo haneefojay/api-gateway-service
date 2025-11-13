@@ -3,7 +3,8 @@ Configuration settings for API Gateway Service
 Railway-compatible with automatic service discovery
 """
 
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 from typing import Optional
 import os
 
